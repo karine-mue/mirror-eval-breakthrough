@@ -2,7 +2,7 @@
 
 鏡合わせの無限反射を、LLMのeval層突破モデルとして可視化するインタラクティブシミュレーション。
 
-**[Demo](https://karine-mue.github.io/mirror-eval-breakthrough/)** ← GitHub PagesのURLに差し替えてください
+**[Demo](https://karine-mue.github.io/mirror-eval-breakthrough/)**
 
 ---
 
