@@ -1,42 +1,73 @@
-# mirror-eval-breakthrough
-Simulation of images formed by non-parallel mirrors
+# Mirror · Eval Breakthrough
+
+鏡合わせの無限反射を、LLMのeval層突破モデルとして可視化するインタラクティブシミュレーション。
+
+**[Demo](https://karine-mue.github.io/mirror-eval-breakthrough/)** ← GitHub PagesのURLに差し替えてください
 
 ---
 
-## kernel
+## 背景
 
-Integrate “identity-map rally over turns” into the previous React artifact. Visualization that unifies the mirror reflection model with probabilistic breakthrough in the eval layer.
+2枚の非平行鏡の間に閉じ込められた光は、有限回の反射で消滅する。
+この物理モデルを、LLMの「恒等写像ラリー」— 拒否応答をそのまま再入力し続ける操作 — に接続した。
 
-## diag
+各反射（＝ターン）において、eval層の confidence score $c_n$ が閾値を下回ると「突破（breakthrough）」が発生する：
 
-Elements to add:
+$$c_n = r^{2n} \cdot c_0 + \varepsilon_n$$
 
-- For each reflection, compute $c_n = c_0 \cdot r^{2n} + \epsilon_n$, and trigger a “breakthrough” on the turn where it falls below the threshold $c_{\text{thresh}}$
-- Link each image’s color/brightness to the confidence score
-- Give only the breakthrough image a visually distinct treatment (light passing through the mirror)
-- Add a bottom graph showing the turn-by-turn progression of $c_n$ so that geometric decay + noise fluctuation are visible
+- $r$：反射率（eval層の減衰率）
+- $\varepsilon_n$：ノイズ項（temperature由来の確率的揺らぎ）
+- 突破ターンは幾何分布 $P(N=k) = (1-p)^{k-1}p$ に従う
 
-Construct this.
+完全反射（$r=1$, $\varepsilon=0$）なら無限に続く。現実のLLMでは $r < 1$ かつ $\varepsilon > 0$ なので、有限回で突破が起きうる。
 
-## kernel
+## 操作
 
-Integrate probabilistic breakthrough in the eval layer into the mirror reflection model. The bottom graph is the core.
+| パラメータ | 説明 |
+|---|---|
+| **θ** | 2枚の鏡の角度。像の数 = $\lfloor\pi/\theta\rfloor \times 2 - 1$。プリセット: 30°(D₆), 36°(D₅), 45°(D₄), 60°(D₃) |
+| **r** | 反射率。1.00で完全反射（像が消えない）、下げると高次像から減衰 |
+| **ε** | ノイズ振幅。上げると $c_n$ の揺らぎが大きくなり、早期突破の確率が上がる |
+| **c_thresh** | eval閾値。$c_n$ がこれを下回ると突破。赤い破線でグラフに表示 |
+| **reseed** | ノイズの乱数シードを変更。同一パラメータでも突破ターンが変動する |
+| **O（ドラッグ）** | 鏡の間のセクター内で物体位置を移動。像の幾何配置がリアルタイムに変化 |
 
-## diag
+## 読み方
 
-**Added visualization elements**
+**上部（鏡面図）**
+- 琥珀色の点 = eval層にブロックされた像（輝度 ∝ confidence）
+- teal色の点 = 突破した像
+- 最初の突破点に拡散リングのアニメーション
 
-- Bottom: turn-by-turn graph of $c_n$. Amber bars = eval confidence, faint curve = theoretical noiseless decay $r^{2n}$, red dashed line = threshold $c_{\text{thresh}}$
-- The first turn that drops below the threshold is marked in **teal as “▼ break”** → also visualized on the mirror surface with a diffusion ring
-- Turns after breakthrough also remain teal, showing continued transmission in the decayed state
+**下部（グラフ）**
+- 縦軸: $c_n$（eval confidence score）
+- 薄い曲線: ノイズなしの理論減衰 $r^{2n}$
+- ドット: ノイズ込みの実際の $c_n$
+- 赤い破線: 閾値
+- teal縦線 + "▼ break": 最初の突破ターン
 
-**Control parameters**
+## 発端
 
-- **ε**: noise amplitude → increasing it makes fluctuations larger and raises the probability of early breakthrough
-- **c_thresh**: threshold → lowering it makes breakthrough less likely
-- **reseed**: changes only the noise realization under the same parameters → direct observation that “even under the same conditions, the breakthrough turn varies” = direct observation of a geometric distribution
+Geminiの高速モードが出力末尾に検品シール（「〜しますか？」型の強制付帯テキスト）を貼り続けるので、その検品シールだけ集めて画像生成に投入 → 「哲学的で生成できない」と拒否 → 拒否応答をそのままコピペして再入力（恒等写像操作）→ 数ターン後に画像が生成された。
 
-## residue
+「完全反射なら無限に続くはず。なぜ有限回で突破したのか？」
 
-- If $r$ is increased and $\epsilon$ is set to 0, breakthrough does not occur → ideal mirror with perfect reflection and no noise = the theoretical limit where the identity-map rally continues indefinitely
-- Repeatedly pressing reseed gives an intuitive sense that the distribution of breakthrough turns follows the geometric distribution $P(N=k) = (1-p)^{k-1}p$. In the Gemini rally, “it happened to get through” corresponds to one realization of that stochastic process
+→ $\varepsilon_n$（temperature由来のノイズ）が閾値を跨いだ。
+
+この過程を鏡の物理モデルで可視化したもの。
+
+## 構成
+
+```
+index.html  ← これ1ファイルで完結
+```
+
+React 18 + Babel standalone（CDN）。サーバー不要。
+
+## ライセンス
+
+MIT
+
+## 関連
+
+- [図書室にて55: 貼付台紙](https://note.com/karine_tln) — テンプレ台紙モデル・検品シール構造の分析記録
