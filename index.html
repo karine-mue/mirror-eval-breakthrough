@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mirror · Eval Breakthrough</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; background: #06060c; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
+
+const TAU = 2 * Math.PI;
+
+const PAL = {
+  bg: "#06060c",
+  bgInner: "#0c0b16",
+  mirror: "#b89d5e",
+  mirrorDim: "rgba(184, 157, 94, 0.25)",
+  mirrorGlow: "rgba(184, 157, 94, 0.35)",
+  blocked: (c) => {
+    const a = 0.3 + 0.6 * c;
+    return `rgba(220, 180, 100, ${a})`;
+  },
+  breakthrough: "rgba(120, 255, 200, 0.95)",
+  breakthroughGlow: "rgba(120, 255, 200, 0.4)",
+  object: "#f0dca0",
+  objectGlow: "rgba(240, 220, 160, 0.5)",
+  ray: (a) => `rgba(255, 220, 140, ${a})`,
+  rayBreak: (a) => `rgba(120, 255, 200, ${a})`,
+  text: "#6e6658",
+  textMid: "#9a8e78",
+  textBright: "#d4c4a0",
+  thresh: "rgba(255, 90, 70, 0.7)",
+  graphBg: "rgba(255, 255, 255, 0.03)",
+  graphLine: "rgba(220, 180, 100, 0.6)",
+  graphDot: (broke) => broke ? "rgba(120, 255, 200, 0.9)" : "rgba(220, 180, 100, 0.8)",
+  graphBar: (c, broke) => broke ? "rgba(120, 255, 200, 0.5)" : `rgba(220, 180, 100, ${0.15 + 0.4 * c})`,
+  sector: "rgba(184, 157, 94, 0.015)",
+  grid: "rgba(184, 157, 94, 0.03)",
+};
+
+function reflectAcrossLine(px, py, angle) {
+  const c2 = Math.cos(2 * angle);
+  const s2 = Math.sin(2 * angle);
+  return [px * c2 + py * s2, px * s2 - py * c2];
+}
+
+function buildImageChain(ox, oy, theta, maxN) {
+  const images = [];
+  let cx = ox, cy = oy;
+  for (let i = 0; i < maxN; i++) {
+    const mAngle = i % 2 === 0 ? 0 : theta;
+    const [nx, ny] = reflectAcrossLine(cx, cy, mAngle);
+    images.push({ x: nx, y: ny, order: i + 1 });
+    cx = nx;
+    cy = ny;
+  }
+  return images;
+}
+
+function generateNoiseSeq(len, seed) {
+  let s = seed;
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    s = (s * 16807 + 7) % 2147483647;
+    out.push((s / 2147483647) * 2 - 1);
+  }
+  return out;
+}
+
+function MirrorEvalBreakthrough() {
+  const canvasRef = useRef(null);
+  const graphRef = useRef(null);
+  const [theta, setTheta] = useState(Math.PI / 5);
+  const [reflectivity, setReflectivity] = useState(0.88);
+  const [noiseAmp, setNoiseAmp] = useState(0.18);
+  const [threshold, setThreshold] = useState(0.25);
+  const [seed, setSeed] = useState(42);
+  const [time, setTime] = useState(0);
+  const [objAngle, setObjAngle] = useState(null);
+  const [objDist, setObjDist] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const sizeRef = useRef(400);
+
+  const thetaDeg = Math.round((theta * 180) / Math.PI);
+  const nMax = theta > 0.02 ? Math.floor(Math.PI / theta) * 2 - 1 : 0;
+  const maxReflections = Math.min(nMax, 30);
+
+  const noiseSeq = useMemo(
+    () => generateNoiseSeq(maxReflections + 2, seed),
+    [maxReflections, seed]
+  );
+
+  const evalScores = useMemo(() => {
+    const scores = [];
+    let firstBreak = -1;
+    for (let i = 0; i < maxReflections; i++) {
+      const decay = Math.pow(reflectivity, 2 * (i + 1));
+      const eps = noiseSeq[i] * noiseAmp;
+      const c = Math.max(0, Math.min(1, decay + eps));
+      const broke = c < threshold;
+      if (broke && firstBreak === -1) firstBreak = i;
+      scores.push({ c, broke, order: i + 1 });
+    }
+    return { scores, firstBreak };
+  }, [maxReflections, reflectivity, noiseAmp, noiseSeq, threshold]);
+
+  const getObjPos = useCallback(() => {
+    const a = objAngle !== null ? objAngle : theta / 2;
+    const d = objDist !== null ? objDist : 0.45;
+    return { angle: a, dist: d };
+  }, [objAngle, objDist, theta]);
+
+  useEffect(() => {
+    let frame;
+    const tick = () => {
+      setTime((t) => t + 0.006);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // Main canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    const size = Math.min(container.clientWidth, container.clientHeight);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = size + "px";
+    canvas.style.height = size + "px";
+    sizeRef.current = size;
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = size * 0.40;
+
+    // Background
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.72);
+    bg.addColorStop(0, PAL.bgInner);
+    bg.addColorStop(1, PAL.bg);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, size, size);
+
+    // Grid circles
+    ctx.strokeStyle = PAL.grid;
+    ctx.lineWidth = 0.5;
+    for (let r = R * 0.25; r <= R; r += R * 0.25) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, TAU);
+      ctx.stroke();
+    }
+
+    // Sector fill
+    ctx.fillStyle = PAL.sector;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, R * 1.05, -theta, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Mirrors
+    const drawMirror = (angle) => {
+      const x2 = cx + R * 1.08 * Math.cos(-angle);
+      const y2 = cy + R * 1.08 * Math.sin(-angle);
+      ctx.strokeStyle = PAL.mirrorGlow;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.strokeStyle = PAL.mirror;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.fillStyle = PAL.mirror;
+      ctx.beginPath();
+      ctx.arc(x2, y2, 2.5, 0, TAU);
+      ctx.fill();
+    };
+    drawMirror(0);
+    drawMirror(theta);
+
+    // Object
+    const obj = getObjPos();
+    const osx = cx + obj.dist * R * Math.cos(-obj.angle);
+    const osy = cy + obj.dist * R * Math.sin(-obj.angle);
+
+    // Compute image positions
+    const images = buildImageChain(
+      obj.dist * R * Math.cos(-obj.angle),
+      obj.dist * R * Math.sin(-obj.angle),
+      theta,
+      maxReflections
+    );
+
+    const { scores, firstBreak } = evalScores;
+
+    // Draw rays and images (back to front)
+    for (let i = images.length - 1; i >= 0; i--) {
+      const img = images[i];
+      const sc = scores[i];
+      if (!sc) continue;
+      const sx = cx + img.x;
+      const sy = cy + img.y;
+
+      const isBroken = sc.broke;
+      const isFirstBreak = i === firstBreak;
+      const intensity = sc.c;
+
+      // Ray from object
+      if (intensity > 0.02 || isBroken) {
+        const rayAlpha = isBroken ? 0.15 : 0.06 * intensity;
+        ctx.strokeStyle = isBroken ? PAL.rayBreak(rayAlpha) : PAL.ray(rayAlpha);
+        ctx.lineWidth = isBroken ? 1 : 0.5;
+        ctx.setLineDash(isBroken ? [] : [2, 4]);
+        ctx.beginPath();
+        ctx.moveTo(osx, osy);
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Image dot
+      const pulse = 1 + 0.12 * Math.sin(time * 2.5 - i * 0.5);
+
+      if (isFirstBreak) {
+        const bR = 9 * pulse;
+        const ringPhase = (time * 1.5) % 1;
+        for (let r = 0; r < 3; r++) {
+          const rp = (ringPhase + r * 0.33) % 1;
+          const rRadius = bR * (1.5 + rp * 4);
+          const rAlpha = 0.3 * (1 - rp);
+          ctx.strokeStyle = `rgba(120, 255, 200, ${rAlpha})`;
+          ctx.lineWidth = 1.5 * (1 - rp);
+          ctx.beginPath();
+          ctx.arc(sx, sy, rRadius, 0, TAU);
+          ctx.stroke();
+        }
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, bR * 4);
+        glow.addColorStop(0, PAL.breakthroughGlow);
+        glow.addColorStop(1, "rgba(120, 255, 200, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR * 4, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = PAL.breakthrough;
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = PAL.breakthrough;
+        ctx.font = 'bold 11px "JetBrains Mono", "SF Mono", monospace';
+        ctx.textAlign = "center";
+        ctx.fillText(`T${img.order}`, sx, sy - bR - 8);
+        ctx.font = '9px "JetBrains Mono", "SF Mono", monospace';
+        ctx.fillStyle = "rgba(120, 255, 200, 0.6)";
+        ctx.fillText("breakthrough", sx, sy - bR - 20);
+      } else if (isBroken) {
+        const bR = 5 * pulse;
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, bR * 2.5);
+        glow.addColorStop(0, "rgba(120, 255, 200, 0.15)");
+        glow.addColorStop(1, "rgba(120, 255, 200, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR * 2.5, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = "rgba(120, 255, 200, 0.5)";
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = "rgba(120, 255, 200, 0.4)";
+        ctx.font = '9px "JetBrains Mono", "SF Mono", monospace';
+        ctx.textAlign = "center";
+        ctx.fillText(`T${img.order}`, sx, sy - bR - 5);
+      } else {
+        const bR = Math.max(2, (6 - i * 0.15) * pulse * Math.max(intensity, 0.15));
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, bR * 2.5);
+        glow.addColorStop(0, `rgba(220, 180, 100, ${0.2 * intensity})`);
+        glow.addColorStop(1, "rgba(220, 180, 100, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR * 2.5, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = PAL.blocked(intensity);
+        ctx.beginPath();
+        ctx.arc(sx, sy, bR, 0, TAU);
+        ctx.fill();
+        if (intensity > 0.12) {
+          ctx.fillStyle = `rgba(200, 175, 120, ${0.5 * intensity})`;
+          ctx.font = `${Math.max(8, 10 - i * 0.3)}px "JetBrains Mono", "SF Mono", monospace`;
+          ctx.textAlign = "center";
+          ctx.fillText(`T${img.order}`, sx, sy - bR - 4);
+        }
+      }
+    }
+
+    // Object (on top)
+    const op = 1 + 0.06 * Math.sin(time * 3);
+    const oR = 7 * op;
+    const og = ctx.createRadialGradient(osx, osy, 0, osx, osy, oR * 3.5);
+    og.addColorStop(0, PAL.objectGlow);
+    og.addColorStop(1, "rgba(240, 220, 160, 0)");
+    ctx.fillStyle = og;
+    ctx.beginPath();
+    ctx.arc(osx, osy, oR * 3.5, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = PAL.object;
+    ctx.beginPath();
+    ctx.arc(osx, osy, oR, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(240, 220, 160, 0.3)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(osx, osy, oR * 1.7, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = PAL.textBright;
+    ctx.font = '11px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.fillText("O", osx, osy - oR * 2 - 3);
+
+    // Origin
+    ctx.fillStyle = "rgba(184, 157, 94, 0.2)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, TAU);
+    ctx.fill();
+
+    // Angle arc
+    ctx.strokeStyle = "rgba(184, 157, 94, 0.2)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 28, -theta, 0);
+    ctx.stroke();
+    ctx.fillStyle = PAL.text;
+    ctx.font = '10px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "center";
+    const la = -theta / 2;
+    ctx.fillText(`θ=${thetaDeg}°`, cx + 42 * Math.cos(la), cy + 42 * Math.sin(la) + 3);
+
+    // Group label
+    const go = theta > 0.02 ? Math.floor(Math.PI / theta) : 0;
+    ctx.fillStyle = "rgba(184, 157, 94, 0.12)";
+    ctx.font = '9px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "left";
+    ctx.fillText(`D${go}`, 10, size - 10);
+  }, [theta, reflectivity, time, getObjPos, evalScores, maxReflections]);
+
+  // Graph canvas
+  useEffect(() => {
+    const canvas = graphRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    const w = container.clientWidth;
+    const h = 120;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const { scores, firstBreak } = evalScores;
+    const n = scores.length;
+    if (n === 0) return;
+
+    const pad = { l: 38, r: 12, t: 18, b: 22 };
+    const gw = w - pad.l - pad.r;
+    const gh = h - pad.t - pad.b;
+
+    // Background
+    ctx.fillStyle = PAL.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Graph area
+    ctx.fillStyle = PAL.graphBg;
+    ctx.fillRect(pad.l, pad.t, gw, gh);
+
+    // Threshold line
+    const thY = pad.t + gh * (1 - threshold);
+    ctx.strokeStyle = PAL.thresh;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, thY);
+    ctx.lineTo(pad.l + gw, thY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = PAL.thresh;
+    ctx.font = '8px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "right";
+    ctx.fillText(`c_thresh=${threshold.toFixed(2)}`, pad.l - 3, thY + 3);
+
+    // Pure decay curve (no noise)
+    ctx.strokeStyle = "rgba(184, 157, 94, 0.15)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = pad.l + (i + 0.5) * (gw / n);
+      const decay = Math.pow(reflectivity, 2 * (i + 1));
+      const y = pad.t + gh * (1 - decay);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Bars + dots
+    const barW = Math.max(2, gw / n * 0.55);
+    for (let i = 0; i < n; i++) {
+      const sc = scores[i];
+      const x = pad.l + (i + 0.5) * (gw / n);
+      const barH = gh * sc.c;
+      const barY = pad.t + gh - barH;
+
+      ctx.fillStyle = PAL.graphBar(sc.c, sc.broke);
+      ctx.fillRect(x - barW / 2, barY, barW, barH);
+
+      const dotY = pad.t + gh * (1 - sc.c);
+      ctx.fillStyle = PAL.graphDot(sc.broke);
+      const dotR = sc.broke ? 3.5 : 2.5;
+      ctx.beginPath();
+      ctx.arc(x, dotY, dotR, 0, TAU);
+      ctx.fill();
+
+      if (i === firstBreak) {
+        ctx.strokeStyle = PAL.breakthrough;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, pad.t);
+        ctx.lineTo(x, pad.t + gh);
+        ctx.stroke();
+        ctx.fillStyle = PAL.breakthrough;
+        ctx.font = 'bold 8px "JetBrains Mono", "SF Mono", monospace';
+        ctx.textAlign = "center";
+        ctx.fillText("▼ break", x, pad.t - 4);
+      }
+
+      if (i === 0 || i === n - 1 || i === firstBreak || n <= 12) {
+        ctx.fillStyle = PAL.text;
+        ctx.font = '7px "JetBrains Mono", "SF Mono", monospace';
+        ctx.textAlign = "center";
+        ctx.fillText(`T${i + 1}`, x, pad.t + gh + 12);
+      }
+    }
+
+    ctx.fillStyle = PAL.text;
+    ctx.font = '7px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "right";
+    ctx.fillText("1.0", pad.l - 3, pad.t + 5);
+    ctx.fillText("0", pad.l - 3, pad.t + gh + 3);
+
+    ctx.fillStyle = PAL.textMid;
+    ctx.font = '8px "JetBrains Mono", "SF Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.fillText("cₙ = r²ⁿ + εₙ", w / 2, h - 2);
+  }, [evalScores, reflectivity, threshold]);
+
+  const handlePointer = useCallback(
+    (e) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const size = sizeRef.current;
+      const cx = size / 2;
+      const cy = size / 2;
+      const R = size * 0.4;
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const dx = mx - cx;
+      const dy = my - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy) / R;
+      const angle = -Math.atan2(dy, dx);
+      if (dist < 1.1 && dist > 0.05 && angle > 0 && angle < theta) {
+        setObjAngle(angle);
+        setObjDist(Math.min(dist, 0.95));
+      }
+    },
+    [theta]
+  );
+
+  return (
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        background: PAL.bg,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace',
+        color: PAL.text,
+        overflow: "hidden",
+        userSelect: "none",
+      }}
+    >
+      <div style={{ textAlign: "center", padding: "10px 0 4px", flexShrink: 0 }}>
+        <div style={{ fontSize: 12, color: PAL.textBright, letterSpacing: "0.14em", fontWeight: 300, textTransform: "uppercase" }}>
+          Mirror · Eval Breakthrough
+        </div>
+        <div style={{ fontSize: 9, marginTop: 2, opacity: 0.65 }}>
+          c<sub>n</sub> = r<sup>2n</sup> · c₀ + ε<sub>n</sub> &nbsp;|&nbsp;
+          images: <span style={{ color: PAL.textBright }}>{maxReflections}</span>
+          {evalScores.firstBreak >= 0 && (
+            <span> &nbsp;|&nbsp; break @ <span style={{ color: PAL.breakthrough }}>T{evalScores.firstBreak + 1}</span></span>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          flex: "1 1 auto",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 0,
+          width: "100%",
+          maxWidth: 520,
+          maxHeight: 520,
+          aspectRatio: "1",
+        }}
+      >
+        <canvas
+          ref={canvasRef}
+          style={{ cursor: dragging ? "grabbing" : "crosshair" }}
+          onPointerDown={(e) => { setDragging(true); handlePointer(e); }}
+          onPointerMove={(e) => { if (dragging) handlePointer(e); }}
+          onPointerUp={() => setDragging(false)}
+          onPointerLeave={() => setDragging(false)}
+        />
+      </div>
+
+      <div style={{ width: "100%", maxWidth: 520, flexShrink: 0, padding: "0 8px" }}>
+        <canvas ref={graphRef} />
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          padding: "8px 12px 12px",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          flexShrink: 0,
+          maxWidth: 560,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <label style={{ fontSize: 10, color: PAL.textBright, opacity: 0.85, letterSpacing: "0.08em" }}>θ = {thetaDeg}°</label>
+          <input type="range" min={10} max={90} step={1} value={thetaDeg}
+            onChange={(e) => setTheta((+e.target.value * Math.PI) / 180)}
+            style={{ width: 90, accentColor: PAL.mirror, cursor: "pointer" }} />
+          <div style={{ display: "flex", gap: 3 }}>
+            {[30, 36, 45, 60].map((d) => (
+              <button key={d} onClick={() => setTheta((d * Math.PI) / 180)}
+                style={{
+                  background: thetaDeg === d ? "rgba(184,157,94,0.22)" : "transparent",
+                  border: `1px solid rgba(184,157,94,${thetaDeg === d ? 0.55 : 0.25})`,
+                  color: PAL.textBright, padding: "2px 7px", borderRadius: 2, fontSize: 9,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>{d}°</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <label style={{ fontSize: 10, color: PAL.textBright, opacity: 0.85 }}>r = {reflectivity.toFixed(2)}</label>
+          <input type="range" min={50} max={100} step={1}
+            value={Math.round(reflectivity * 100)}
+            onChange={(e) => setReflectivity(+e.target.value / 100)}
+            style={{ width: 80, accentColor: PAL.mirror, cursor: "pointer" }} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <label style={{ fontSize: 10, color: PAL.textBright, opacity: 0.85 }}>ε = {noiseAmp.toFixed(2)}</label>
+          <input type="range" min={0} max={40} step={1}
+            value={Math.round(noiseAmp * 100)}
+            onChange={(e) => setNoiseAmp(+e.target.value / 100)}
+            style={{ width: 80, accentColor: PAL.mirror, cursor: "pointer" }} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <label style={{ fontSize: 10, color: "rgba(255,110,90,0.9)", opacity: 0.9 }}>c_thresh = {threshold.toFixed(2)}</label>
+          <input type="range" min={5} max={60} step={1}
+            value={Math.round(threshold * 100)}
+            onChange={(e) => setThreshold(+e.target.value / 100)}
+            style={{ width: 80, accentColor: "rgb(255,90,70)", cursor: "pointer" }} />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          <label style={{ fontSize: 10, color: PAL.textBright, opacity: 0.85 }}>noise seed</label>
+          <button
+            onClick={() => setSeed((s) => s + 1)}
+            style={{
+              background: "rgba(184,157,94,0.14)", border: "1px solid rgba(184,157,94,0.3)",
+              color: PAL.textBright, padding: "4px 14px", borderRadius: 3, fontSize: 10,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >reseed</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<MirrorEvalBreakthrough />);
+</script>
+</body>
+</html>
